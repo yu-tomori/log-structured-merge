@@ -21,7 +21,7 @@ type LogStructuredMergeTree struct {
 }
 
 func Init() (*os.File) {
-	t := time.Now().Format("2006-01-02T15:04:05Z07:00")
+	t := time.Now().Format("2006-01-02")
 	filePath := fmt.Sprintf("files/%s", t)
 	f, err := os.Create(filePath)
 	if err != nil {
@@ -69,8 +69,14 @@ func (lsm LogStructuredMergeTree) Store(key string) (ok bool, savedAt byteOffset
 }
 
 func main() {
-	lsm := Connect("files/2026-11-09.txt")
-	fmt.Printf("initialized file: %s\n", lsm.file.Name())
-	fmt.Printf("key2: %s\n", lsm.Get("key2"))
+	if len(os.Args) != 3 {
+		fmt.Printf("invalid arguements: length %d", len(os.Args))
+		os.Exit(1)
+	}
+
+	connectPath := os.Args[1]
+	lsm := Connect(fmt.Sprintf("files/%s", connectPath))
+
+	fmt.Printf("%s: %s\n", os.Args[2], lsm.Get(os.Args[2]))
 }
 
