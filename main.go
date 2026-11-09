@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"io"
 	"strings"
 	"time"
 	"fmt"
@@ -12,7 +13,7 @@ type byteOffset int64
 
 type Storage interface {
 	Get(key string) (value string)
-	Store(key string) (ok bool, savedAt byteOffset)
+	Store(key string, value string) (ok bool, savedAt byteOffset)
 }
 
 type LogStructuredMergeTree struct {
@@ -32,7 +33,7 @@ func Init() (*os.File) {
 }
 
 func Connect(path string) (LogStructuredMergeTree) {
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 	if err != nil {
 		fmt.Printf("not found path: %s", path)
 	}
@@ -44,8 +45,17 @@ func Connect(path string) (LogStructuredMergeTree) {
 	return lsm
 }
 
+func (lsm LogStructuredMergeTree) Close() {
+	lsm.file.Close()
+}
+
 // return empty string, if key not found
 func (lsm LogStructuredMergeTree) Get(key string) (value string) {
+	if _, err := lsm.file.Seek(0, io.SeekStart); err != nil {
+		fmt.Printf("failed to reset seek: %v\n", err)
+		return ""
+	}
+
 	// full scan now. optimize it later.
 	scanner := bufio.NewScanner(lsm.file)
 	kvs := make(map[string]string)
@@ -64,8 +74,13 @@ func (lsm LogStructuredMergeTree) Get(key string) (value string) {
 	return value
 }
 
-func (lsm LogStructuredMergeTree) Store(key string) (ok bool, savedAt byteOffset) {
-	return true, byteOffset(int64(0))
+func (lsm LogStructuredMergeTree) Store(key string, value string) (ok bool) {
+	line := fmt.Sprintf("%s,%s", key, value)
+	if _, err := fmt.Fprintln(lsm.file, line); err != nil {
+		fmt.Printf("failed to store: %v\n", err)
+		return false
+	}
+	return true
 }
 
 func main() {
@@ -76,6 +91,7 @@ func main() {
 
 	connectPath := os.Args[1]
 	lsm := Connect(fmt.Sprintf("files/%s", connectPath))
+	defer lsm.Close()
 
 	fmt.Printf("%s: %s\n", os.Args[2], lsm.Get(os.Args[2]))
 }
