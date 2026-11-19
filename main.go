@@ -61,8 +61,8 @@ func buildIndex(f *os.File) (index map[string]byteOffset) {
 			record = strings.TrimSuffix(line, "\r")
 			fields := strings.SplitN(record, ",", 2)
 			k := fields[0]
-			offset += int64(len(line))
 			index[k] = byteOffset(offset)
+			offset += int64(len(line))
 		}
 		if err != nil {
 			if err == io.EOF {
@@ -85,22 +85,36 @@ func (lsm LogStructuredMergeTree) Get(key string) (value string) {
 		return ""
 	}
 
-	// full scan now. optimize it later.
-	scanner := bufio.NewScanner(lsm.file)
-	kvs := make(map[string]string)
-	for scanner.Scan() {
-		line := strings.Split(scanner.Text(), ",")
-		if len(line) != 2 {
-			fmt.Printf("malformed key value: %v", line)
-			os.Exit(1)
-		}
-		kvs[line[0]] = line[1]
+	info, err := lsm.file.Stat()
+	if err != nil {
+		fmt.Printf("failed to stat fiel: %v\n", err)
+		return ""
 	}
-	value, ok := kvs[key]
+
+	offset, ok := lsm.index[key]
+	start := int64(offset)
 	if !ok {
 		return ""
 	}
-	return value
+	r := bufio.NewReader(io.NewSectionReader(
+		lsm.file,
+		start,
+		info.Size()-start,
+	))
+
+	line, err := r.ReadString('\n')
+	if err != nil && err != io.EOF {
+		fmt.Printf("failed to read line: %v\n", err)
+		return ""
+	}
+	line = strings.TrimSuffix(line, "\n")
+	line = strings.TrimSuffix(line, "\r")
+	fields := strings.SplitN(line, ",", 2)
+	if len(fields) != 2 || fields[0] != key {
+		return ""
+	}
+
+	return fields[1]
 }
 
 func (lsm LogStructuredMergeTree) Store(key string, value string) (ok bool) {
