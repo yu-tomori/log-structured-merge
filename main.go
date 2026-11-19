@@ -1,27 +1,25 @@
 package main
 
 import (
-	"os"
+	"bufio"
+	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
-	"fmt"
-	"bufio"
 )
-
-type byteOffset int64
 
 type Storage interface {
 	Get(key string) (value string)
-	Store(key string, value string) (ok bool, savedAt byteOffset)
+	Store(key string, value string) (ok bool, savedAt int64)
 }
 
 type LogStructuredMergeTree struct {
-	file *os.File
-	index map[string]byteOffset
+	file  *os.File
+	index map[string]int64 // key to offset in file
 }
 
-func Init() (*os.File) {
+func Init() *os.File {
 	t := time.Now().Format("2006-01-02")
 	filePath := fmt.Sprintf("files/%s", t)
 	f, err := os.Create(filePath)
@@ -32,25 +30,25 @@ func Init() (*os.File) {
 	return f
 }
 
-func Connect(path string) (LogStructuredMergeTree) {
+func Connect(path string) LogStructuredMergeTree {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 	if err != nil {
 		fmt.Printf("not found path: %s", path)
 	}
 	i := buildIndex(f)
 	lsm := LogStructuredMergeTree{
-		file: f,
+		file:  f,
 		index: i,
 	}
 	return lsm
 }
 
-func buildIndex(f *os.File) (index map[string]byteOffset) {
+func buildIndex(f *os.File) (index map[string]int64) {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		fmt.Printf("failed to reset seek: %v\n", err)
 		os.Exit(1)
 	}
-	index = make(map[string]byteOffset)
+	index = make(map[string]int64)
 
 	reader := bufio.NewReader(f)
 	var offset int64
@@ -61,7 +59,7 @@ func buildIndex(f *os.File) (index map[string]byteOffset) {
 			record = strings.TrimSuffix(line, "\r")
 			fields := strings.SplitN(record, ",", 2)
 			k := fields[0]
-			index[k] = byteOffset(offset)
+			index[k] = int64(offset)
 			offset += int64(len(line))
 		}
 		if err != nil {
@@ -118,11 +116,20 @@ func (lsm LogStructuredMergeTree) Get(key string) (value string) {
 }
 
 func (lsm LogStructuredMergeTree) Store(key string, value string) (ok bool) {
+	// for index updates
+	info, err := lsm.file.Stat()
+	if err != nil {
+		return false
+	}
+	offset := info.Size()
+
 	line := fmt.Sprintf("%s,%s", key, value)
+
 	if _, err := fmt.Fprintln(lsm.file, line); err != nil {
 		fmt.Printf("failed to store: %v\n", err)
 		return false
 	}
+	lsm.index[key] = int64(offset)
 	return true
 }
 
@@ -138,4 +145,3 @@ func main() {
 
 	fmt.Printf("%s: %s\n", os.Args[2], lsm.Get(os.Args[2]))
 }
-
