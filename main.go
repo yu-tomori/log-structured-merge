@@ -37,12 +37,41 @@ func Connect(path string) (LogStructuredMergeTree) {
 	if err != nil {
 		fmt.Printf("not found path: %s", path)
 	}
-	i := make(map[string]byteOffset)
+	i := buildIndex(f)
 	lsm := LogStructuredMergeTree{
 		file: f,
 		index: i,
 	}
 	return lsm
+}
+
+func buildIndex(f *os.File) (index map[string]byteOffset) {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		fmt.Printf("failed to reset seek: %v\n", err)
+		os.Exit(1)
+	}
+	index = make(map[string]byteOffset)
+
+	reader := bufio.NewReader(f)
+	var offset int64
+	for {
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			record := strings.TrimSuffix(line, "\n")
+			record = strings.TrimSuffix(line, "\r")
+			fields := strings.SplitN(record, ",", 2)
+			k := fields[0]
+			offset += int64(len(line))
+			index[k] = byteOffset(offset)
+		}
+		if err != nil {
+			if err == io.EOF {
+				return index
+			}
+			fmt.Printf("unexpected error while building index: %v", err)
+			return index
+		}
+	}
 }
 
 func (lsm LogStructuredMergeTree) Close() {
