@@ -1,19 +1,23 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
 // don't flush, just keep in memory
-func connect(t *testing.T, content string) *LogStructuredMergeTree {
+func connect(t *testing.T, contents ...string) *LogStructuredMergeTree {
 	t.Helper()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "fixture.log")
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-		t.Fatal(err)
+	for n, c := range contents {
+		fileName := fmt.Sprintf("fixture_%d.log", n+1)
+		path := filepath.Join(dir, fileName)
+		if err := os.WriteFile(path, []byte(c), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	lsm, err := Connect(dir)
 	if err != nil {
@@ -58,6 +62,29 @@ key1,value
 	}
 }
 
+func TestGetMultipleFile(t *testing.T) {
+	file1 := `
+key1,value1
+key2,value2
+key3,value3
+`
+	file2 := `
+key2,value5
+key3,value6
+`
+	lsm := connect(t, file1, file2)
+
+	key := "key3"
+	expected := "value6"
+	actual, err := lsm.Get(key)
+	if err != nil {
+		t.Errorf("failed to lsm.Get: %v", err)
+	}
+	if actual != expected {
+		t.Errorf("expected: %s, actual: %s", expected, actual)
+	}
+}
+
 func TestStore(t *testing.T) {
 	content := `
 key1,value1
@@ -78,22 +105,28 @@ key3,value3
 	}
 }
 
-func TestStoreAndGet(t *testing.T) {
-	content := `
+func TestStoreMultipleFile(t *testing.T) {
+	file1 := `
 key1,value1
 key2,value2
 key3,value3
 `
-	lsm := connect(t, content)
-	if err := lsm.Store("key4", "value5"); err != nil {
+	file2 := `
+key2,value5
+key3,value6
+`
+	lsm := connect(t, file1, file2)
+
+	key := "key3"
+	expected := "value4"
+	if err := lsm.Store(key, expected); err != nil {
 		t.FailNow()
 	}
-	value, err := lsm.Get("key4")
+	actual, err := lsm.Get(key)
 	if err != nil {
-		t.Fatalf("failed to lsm.Get: %v", err)
+		t.Errorf("failed to lsm.Get: %v", err)
 	}
-	expected := "value5"
-	if value != expected {
-		t.Errorf("expected: %s, actual: %s", expected, value)
+	if actual != expected {
+		t.Errorf("expected: %s, actual: %s", expected, actual)
 	}
 }

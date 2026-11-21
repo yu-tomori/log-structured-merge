@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -101,7 +102,7 @@ func (lsm *LogStructuredMergeTree) addFile(f *os.File) error {
 
 // return empty string, if key not found
 func (lsm *LogStructuredMergeTree) Get(key string) (value string, err error) {
-	for _, file := range lsm.files {
+	for _, file := range slices.Backward(lsm.files) {
 		f, err := os.Open(file.path)
 		if err != nil {
 			return "", err
