@@ -32,12 +32,10 @@ key3,value3
 	lsm := connect(t, content)
 	value, err := lsm.Get("key2")
 	if err != nil {
-		t.Errorf("lsm.Get failed: %s", value)
-		t.Fail()
+		t.Fatalf("lsm.Get failed: %s", value)
 	}
 	if value != "value2" {
 		t.Errorf("expected: value2, actual: %s", value)
-		t.Fail()
 	}
 }
 
@@ -51,14 +49,12 @@ key1,value
 	lsm := connect(t, content)
 	actual, err := lsm.Get("key1")
 	if err != nil {
-		t.Errorf("failed to lsm.Get: %v", err)
-		t.Fail()
+		t.Fatalf("failed to lsm.Get: %v", err)
 	}
 	// get latest value
 	expected := "value"
 	if actual != expected {
 		t.Errorf("expected: %s, actual: %s", expected, actual)
-		t.Fail()
 	}
 }
 
@@ -69,14 +65,13 @@ key2,value2
 key3,value3
 `
 	lsm := connect(t, content)
-	if ok := lsm.Store("key3", "value3"); !ok {
-		t.Fail()
+	if err := lsm.Store("key3", "value3"); err != nil {
+		t.FailNow()
 	}
 	expected := "value3"
 	actual, err := lsm.Get("key3")
 	if err != nil {
 		t.Errorf("failed to lsm.Get: %v", err)
-		t.Fail()
 	}
 	if actual != expected {
 		t.Errorf("expected: %s, actual: %s", expected, actual)
@@ -90,17 +85,15 @@ key2,value2
 key3,value3
 `
 	lsm := connect(t, content)
-	if ok := lsm.Store("key4", "value5"); !ok {
-		t.Fail()
+	if err := lsm.Store("key4", "value5"); err != nil {
+		t.FailNow()
 	}
 	value, err := lsm.Get("key4")
 	if err != nil {
-		t.Errorf("failed to lsm.Get: %v", err)
-		t.Fail()
+		t.Fatalf("failed to lsm.Get: %v", err)
 	}
 	expected := "value5"
 	if value != expected {
 		t.Errorf("expected: %s, actual: %s", expected, value)
-		t.Fail()
 	}
 }

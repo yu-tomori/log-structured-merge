@@ -143,30 +143,33 @@ func (lsm *LogStructuredMergeTree) Get(key string) (value string, err error) {
 	return "", nil
 }
 
-func (lsm *LogStructuredMergeTree) Store(key string, value string) (ok bool) {
-	for _, file := range lsm.files {
-		f, err := os.OpenFile(file.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
-		defer f.Close()
+func (lsm *LogStructuredMergeTree) Store(key string, value string) error {
+	latest := lsm.files[len(lsm.files)-1]
+	f, err := os.OpenFile(latest.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
+	defer func() {
+		err := f.Close()
 		if err != nil {
-			return false
+			fmt.Printf("failed to close file: %v", err)
 		}
-		// for index updates
-		info, err := f.Stat()
-		if err != nil {
-			return false
-		}
-		offset := info.Size()
+	}()
 
-		line := fmt.Sprintf("%s,%s", key, value)
-
-		if _, err := fmt.Fprintln(f, line); err != nil {
-			fmt.Printf("failed to store: %v\n", err)
-			return false
-		}
-		file.index[key] = int64(offset)
-		return true
+	if err != nil {
+		return fmt.Errorf("failed to open file: %v", err)
 	}
-	return false
+	// for index updates
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to get filesize: %v", err)
+	}
+	offset := info.Size()
+
+	line := fmt.Sprintf("%s,%s", key, value)
+	if _, err := fmt.Fprintln(f, line); err != nil {
+		return fmt.Errorf("failed to flush: %v\n", err)
+	}
+	latest.index[key] = int64(offset)
+
+	return nil
 }
 
 func main() {
