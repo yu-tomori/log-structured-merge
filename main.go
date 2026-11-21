@@ -24,7 +24,7 @@ type LogStructuredMergeTree struct {
 	}
 }
 
-const maxBytesPerFile = 1000
+const maxBytesPerFile = 10000
 
 func Connect(connectURI string) (*LogStructuredMergeTree, error) {
 	if err := os.MkdirAll(connectURI, 0755); err != nil {

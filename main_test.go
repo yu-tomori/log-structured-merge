@@ -132,24 +132,22 @@ key3,value6
 }
 
 func TestStoreBeyondMaxBytes(t *testing.T) {
-	f, err := os.Open("fixture/almost_1000_bytes.log")
-	if err != nil {
-		t.Fatal(err)
+	content := ""
+	n := 0
+	for {
+		line := fmt.Sprintf("key%d,value%d\n", n, n)
+		if len(content)+len(line) > maxBytesPerFile {
+			break
+		}
+		content = content + line
+		n++
 	}
-	info, err := f.Stat()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("maxBytes: %d, fixture size: %d\n", maxBytesPerFile, info.Size())
-	if info.Size() > int64(maxBytesPerFile) {
+	t.Logf("maxBytes: %d, fixture size: %d\n", maxBytesPerFile, len(content))
+	if len(content) > maxBytesPerFile {
 		t.Fatal("precondition isn't sutisfied\n")
 	}
 
-	content := make([]byte, 0, info.Size())
-	if _, err := f.Read(content); err != nil {
-		t.Fatalf("failed to create content: %v", err)
-	}
-	lsm := connect(t, string(content))
+	lsm := connect(t, content)
 	key := "key"
 	expected := "valuevaluevaluevaluevaluevaluevaluevalue"
 	if err := lsm.Store(key, expected); err != nil {
