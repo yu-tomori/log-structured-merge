@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
-	"time"
 )
 
 type Storage interface {
@@ -15,41 +15,69 @@ type Storage interface {
 }
 
 type LogStructuredMergeTree struct {
-	file  *os.File
-	index map[string]int64 // key to offset in file
+	dir   string
+	files []struct { // new file added at last
+		path  string           // open, close in every access
+		index map[string]int64 // key to offset in file
+	}
 }
 
-func Init() *os.File {
-	t := time.Now().Format("2006-01-02")
-	filePath := fmt.Sprintf("files/%s", t)
-	f, err := os.Create(filePath)
+func Connect(connectURI string) (*LogStructuredMergeTree, error) {
+	if err := os.MkdirAll(connectURI, 0755); err != nil {
+		return nil, err
+	}
+
+	lsm := &LogStructuredMergeTree{
+		dir: connectURI,
+		files: make([]struct {
+			path  string
+			index map[string]int64 // key to offset in file
+		}, 0, 1),
+	}
+
+	entries, err := os.ReadDir(connectURI)
 	if err != nil {
-		fmt.Printf("failed to initialize file: %v", err)
-		os.Exit(1)
+		return nil, err
 	}
-	return f
+
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".log" {
+			continue
+		}
+		path := filepath.Join(connectURI, entry.Name())
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		if err := lsm.addFile(f); err != nil {
+			return nil, fmt.Errorf("failed to index a file: %v", err)
+		}
+		f.Close()
+	}
+
+	return lsm, nil
 }
 
-func Connect(path string) LogStructuredMergeTree {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
-	if err != nil {
-		fmt.Printf("not found path: %s", path)
-	}
-	i := buildIndex(f)
-	lsm := LogStructuredMergeTree{
-		file:  f,
-		index: i,
-	}
-	return lsm
-}
-
-func buildIndex(f *os.File) (index map[string]int64) {
+func (lsm *LogStructuredMergeTree) addFile(f *os.File) error {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		fmt.Printf("failed to reset seek: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to reset seek: %v\n", err)
 	}
-	index = make(map[string]int64)
 
+	abs, err := filepath.Abs(f.Name())
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path of file: %v", err)
+	}
+
+	file := struct {
+		path  string
+		index map[string]int64
+	}{
+		path:  abs,
+		index: make(map[string]int64),
+	}
+	lsm.files = append(lsm.files, file)
+
+	// build index
 	reader := bufio.NewReader(f)
 	var offset int64
 	for {
@@ -59,78 +87,86 @@ func buildIndex(f *os.File) (index map[string]int64) {
 			record = strings.TrimSuffix(line, "\r")
 			fields := strings.SplitN(record, ",", 2)
 			k := fields[0]
-			index[k] = int64(offset)
+			file.index[k] = int64(offset)
 			offset += int64(len(line))
 		}
 		if err != nil {
 			if err == io.EOF {
-				return index
+				return nil
 			}
-			fmt.Printf("unexpected error while building index: %v", err)
-			return index
+			return fmt.Errorf("unexpected error while building index: %v", err)
 		}
 	}
 }
 
-func (lsm LogStructuredMergeTree) Close() {
-	lsm.file.Close()
-}
-
 // return empty string, if key not found
-func (lsm LogStructuredMergeTree) Get(key string) (value string) {
-	if _, err := lsm.file.Seek(0, io.SeekStart); err != nil {
-		fmt.Printf("failed to reset seek: %v\n", err)
-		return ""
-	}
+func (lsm *LogStructuredMergeTree) Get(key string) (value string, err error) {
+	for _, file := range lsm.files {
+		f, err := os.Open(file.path)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return "", fmt.Errorf("failed to reset seek: %v\n", err)
+		}
 
-	info, err := lsm.file.Stat()
-	if err != nil {
-		fmt.Printf("failed to stat fiel: %v\n", err)
-		return ""
-	}
+		info, err := f.Stat()
+		if err != nil {
+			return "", fmt.Errorf("failed to stat fiel: %v\n", err)
+		}
 
-	offset, ok := lsm.index[key]
-	start := int64(offset)
-	if !ok {
-		return ""
-	}
-	r := bufio.NewReader(io.NewSectionReader(
-		lsm.file,
-		start,
-		info.Size()-start,
-	))
+		offset, ok := file.index[key]
+		start := int64(offset)
+		if !ok {
+			continue
+		}
+		r := bufio.NewReader(io.NewSectionReader(
+			f,
+			start,
+			info.Size()-start,
+		))
 
-	line, err := r.ReadString('\n')
-	if err != nil && err != io.EOF {
-		fmt.Printf("failed to read line: %v\n", err)
-		return ""
+		line, err := r.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return "", fmt.Errorf("failed to read line: %v\n", err)
+		}
+		line = strings.TrimSuffix(line, "\n")
+		line = strings.TrimSuffix(line, "\r")
+		fields := strings.SplitN(line, ",", 2)
+		if len(fields) != 2 || fields[0] != key {
+			return "", nil
+		}
+		return fields[1], nil
 	}
-	line = strings.TrimSuffix(line, "\n")
-	line = strings.TrimSuffix(line, "\r")
-	fields := strings.SplitN(line, ",", 2)
-	if len(fields) != 2 || fields[0] != key {
-		return ""
-	}
-
-	return fields[1]
+	// no key found
+	return "", nil
 }
 
-func (lsm LogStructuredMergeTree) Store(key string, value string) (ok bool) {
-	// for index updates
-	info, err := lsm.file.Stat()
-	if err != nil {
-		return false
-	}
-	offset := info.Size()
+func (lsm *LogStructuredMergeTree) Store(key string, value string) (ok bool) {
+	for _, file := range lsm.files {
+		f, err := os.OpenFile(file.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
+		defer f.Close()
+		if err != nil {
+			return false
+		}
+		// for index updates
+		info, err := f.Stat()
+		if err != nil {
+			return false
+		}
+		offset := info.Size()
 
-	line := fmt.Sprintf("%s,%s", key, value)
+		line := fmt.Sprintf("%s,%s", key, value)
 
-	if _, err := fmt.Fprintln(lsm.file, line); err != nil {
-		fmt.Printf("failed to store: %v\n", err)
-		return false
+		if _, err := fmt.Fprintln(f, line); err != nil {
+			fmt.Printf("failed to store: %v\n", err)
+			return false
+		}
+		file.index[key] = int64(offset)
+		return true
 	}
-	lsm.index[key] = int64(offset)
-	return true
+	return false
 }
 
 func main() {
@@ -140,8 +176,16 @@ func main() {
 	}
 
 	connectPath := os.Args[1]
-	lsm := Connect(fmt.Sprintf("files/%s", connectPath))
-	defer lsm.Close()
+	lsm, err := Connect(connectPath)
+	if err != nil {
+		fmt.Printf("failed to connect URI: %v", err)
+		os.Exit(1)
+	}
 
-	fmt.Printf("%s: %s\n", os.Args[2], lsm.Get(os.Args[2]))
+	value, err := lsm.Get(os.Args[2])
+	if err != nil {
+		fmt.Printf("failed to get value: %v", err)
+		os.Exit(1)
+	}
+	fmt.Printf("%s: %s\n", os.Args[2], value)
 }

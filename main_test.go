@@ -7,13 +7,20 @@ import (
 )
 
 // don't flush, just keep in memory
-func connect(t *testing.T, content string) LogStructuredMergeTree {
+func connect(t *testing.T, content string) *LogStructuredMergeTree {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "testfile")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fixture.log")
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	return Connect(path)
+	lsm, err := Connect(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return lsm
 }
 
 func TestGet(t *testing.T) {
@@ -23,10 +30,34 @@ key2,value2
 key3,value3
 `
 	lsm := connect(t, content)
-	defer lsm.file.Close()
-	value := lsm.Get("key2")
+	value, err := lsm.Get("key2")
+	if err != nil {
+		t.Errorf("lsm.Get failed: %s", value)
+		t.Fail()
+	}
 	if value != "value2" {
 		t.Errorf("expected: value2, actual: %s", value)
+		t.Fail()
+	}
+}
+
+func TestGetDuplicateKeys(t *testing.T) {
+	content := `
+key1,value1
+key2,value2
+key3,value3
+key1,value
+`
+	lsm := connect(t, content)
+	actual, err := lsm.Get("key1")
+	if err != nil {
+		t.Errorf("failed to lsm.Get: %v", err)
+		t.Fail()
+	}
+	// get latest value
+	expected := "value"
+	if actual != expected {
+		t.Errorf("expected: %s, actual: %s", expected, actual)
 		t.Fail()
 	}
 }
@@ -38,12 +69,15 @@ key2,value2
 key3,value3
 `
 	lsm := connect(t, content)
-	defer lsm.Close()
 	if ok := lsm.Store("key3", "value3"); !ok {
 		t.Fail()
 	}
 	expected := "value3"
-	actual := lsm.Get("key3")
+	actual, err := lsm.Get("key3")
+	if err != nil {
+		t.Errorf("failed to lsm.Get: %v", err)
+		t.Fail()
+	}
 	if actual != expected {
 		t.Errorf("expected: %s, actual: %s", expected, actual)
 	}
@@ -56,31 +90,17 @@ key2,value2
 key3,value3
 `
 	lsm := connect(t, content)
-	defer lsm.file.Close()
 	if ok := lsm.Store("key4", "value5"); !ok {
 		t.Fail()
 	}
-	value := lsm.Get("key4")
+	value, err := lsm.Get("key4")
+	if err != nil {
+		t.Errorf("failed to lsm.Get: %v", err)
+		t.Fail()
+	}
 	expected := "value5"
 	if value != expected {
 		t.Errorf("expected: %s, actual: %s", expected, value)
-		t.Fail()
-	}
-}
-
-func TestGetDuplicateKeys(t *testing.T) {
-	content := `
-key1,value1
-key2,value2
-key3,value3
-key1,value3
-`
-	lsm := connect(t, content)
-	defer lsm.file.Close()
-	value := lsm.Get("key1")
-	// get latest value
-	if value != "value3" {
-		t.Errorf("expected: value3, actual: %s", value)
 		t.Fail()
 	}
 }
