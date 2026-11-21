@@ -27,6 +27,35 @@ func connect(t *testing.T, contents ...string) *LogStructuredMergeTree {
 	return lsm
 }
 
+func TestConnectEmptyDir(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	lsm, err := Connect(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "key1"
+	value, err := lsm.Get(key)
+	if err != nil {
+		t.Fatal(value)
+	}
+	if value != "" {
+		t.Errorf("value should be empty string, but %s", value)
+	}
+
+	expected := "value1"
+	if err := lsm.Store(key, expected); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := lsm.Get(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual != expected {
+		t.Errorf("expected: %s, actual: %s", expected, actual)
+	}
+}
+
 func TestGet(t *testing.T) {
 	content := `
 key1,value1

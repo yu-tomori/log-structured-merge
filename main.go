@@ -148,6 +148,18 @@ func (lsm *LogStructuredMergeTree) Get(key string) (value string, err error) {
 }
 
 func (lsm *LogStructuredMergeTree) Store(key string, value string) error {
+	// empty data
+	if len(lsm.files) == 0 {
+		fileName := fmt.Sprintf("%s.log", time.Now().Format(time.RFC3339))
+		file, err := os.Create(lsm.dir + fileName)
+		if err != nil {
+			return err
+		}
+		if err := lsm.indexFile(file); err != nil {
+			return err
+		}
+	}
+
 	latest := lsm.files[len(lsm.files)-1]
 	f, err := os.OpenFile(latest.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 	defer func() {
