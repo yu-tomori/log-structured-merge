@@ -130,3 +130,36 @@ key3,value6
 		t.Errorf("expected: %s, actual: %s", expected, actual)
 	}
 }
+
+func TestStoreBeyondMaxBytes(t *testing.T) {
+	f, err := os.Open("fixture/almost_1000_bytes.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("maxBytes: %d, fixture size: %d\n", maxBytesPerFile, info.Size())
+	if info.Size() > int64(maxBytesPerFile) {
+		t.Fatal("precondition isn't sutisfied\n")
+	}
+
+	content := make([]byte, 0, info.Size())
+	if _, err := f.Read(content); err != nil {
+		t.Fatalf("failed to create content: %v", err)
+	}
+	lsm := connect(t, string(content))
+	key := "key"
+	expected := "valuevaluevaluevaluevaluevaluevaluevalue"
+	if err := lsm.Store(key, expected); err != nil {
+		t.Fatalf("failed to store: %v", err)
+	}
+	actual, err := lsm.Get(key)
+	if err != nil {
+		t.Fatalf("failed to get: %v", err)
+	}
+	if actual != expected {
+		t.Errorf("expected: %s, actual: %s", expected, actual)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 type Storage interface {
@@ -22,6 +23,8 @@ type LogStructuredMergeTree struct {
 		index map[string]int64 // key to offset in file
 	}
 }
+
+const maxBytesPerFile = 1000
 
 func Connect(connectURI string) (*LogStructuredMergeTree, error) {
 	if err := os.MkdirAll(connectURI, 0755); err != nil {
@@ -50,7 +53,7 @@ func Connect(connectURI string) (*LogStructuredMergeTree, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := lsm.addFile(f); err != nil {
+		if err := lsm.indexFile(f); err != nil {
 			return nil, fmt.Errorf("failed to index a file: %v", err)
 		}
 		f.Close()
@@ -59,7 +62,7 @@ func Connect(connectURI string) (*LogStructuredMergeTree, error) {
 	return lsm, nil
 }
 
-func (lsm *LogStructuredMergeTree) addFile(f *os.File) error {
+func (lsm *LogStructuredMergeTree) indexFile(f *os.File) error {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("failed to reset seek: %v\n", err)
 	}
@@ -165,6 +168,22 @@ func (lsm *LogStructuredMergeTree) Store(key string, value string) error {
 	offset := info.Size()
 
 	line := fmt.Sprintf("%s,%s", key, value)
+	if int(offset)+len([]byte(line)) > maxBytesPerFile {
+		fileName := fmt.Sprintf("%s.log", time.Now().Format(time.RFC3339))
+		file, err := os.Create(lsm.dir + fileName)
+		if err != nil {
+			return err
+		}
+
+		// write new line to new file
+		if _, err := fmt.Fprintln(file, line); err != nil {
+			return fmt.Errorf("failed to flush: %v\n", err)
+		}
+
+		if err := lsm.indexFile(file); err != nil {
+			return err
+		}
+	}
 	if _, err := fmt.Fprintln(f, line); err != nil {
 		return fmt.Errorf("failed to flush: %v\n", err)
 	}
