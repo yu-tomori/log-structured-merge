@@ -14,6 +14,7 @@ import (
 type Storage interface {
 	Get(key string) (value string)
 	Store(key string, value string) (ok bool, savedAt int64)
+	Compact() error
 }
 
 type LogStructuredMergeTree struct {
@@ -150,8 +151,7 @@ func (lsm *LogStructuredMergeTree) Get(key string) (value string, err error) {
 func (lsm *LogStructuredMergeTree) Store(key string, value string) error {
 	// empty data
 	if len(lsm.files) == 0 {
-		fileName := fmt.Sprintf("%s.log", time.Now().Format(time.RFC3339))
-		file, err := os.Create(lsm.dir + fileName)
+		file, err := lsm.createFile()
 		if err != nil {
 			return err
 		}
@@ -181,12 +181,10 @@ func (lsm *LogStructuredMergeTree) Store(key string, value string) error {
 
 	line := fmt.Sprintf("%s,%s", key, value)
 	if int(offset)+len([]byte(line)) > maxBytesPerFile {
-		fileName := fmt.Sprintf("%s.log", time.Now().Format(time.RFC3339))
-		file, err := os.Create(lsm.dir + fileName)
+		file, err := lsm.createFile()
 		if err != nil {
 			return err
 		}
-
 		// write new line to new file
 		if _, err := fmt.Fprintln(file, line); err != nil {
 			return fmt.Errorf("failed to flush: %v\n", err)
@@ -195,11 +193,130 @@ func (lsm *LogStructuredMergeTree) Store(key string, value string) error {
 		if err := lsm.indexFile(file); err != nil {
 			return err
 		}
+	} else {
+		if _, err := fmt.Fprintln(f, line); err != nil {
+			return fmt.Errorf("failed to flush: %v\n", err)
+		}
+		latest.index[key] = int64(offset)
 	}
-	if _, err := fmt.Fprintln(f, line); err != nil {
-		return fmt.Errorf("failed to flush: %v\n", err)
+
+	return nil
+}
+
+// it doesn't index, doesnt't initialize file content
+func (lsm *LogStructuredMergeTree) createFile() (*os.File, error) {
+	fileName := fmt.Sprintf("%s.log", time.Now().Format(time.RFC3339))
+	return os.Create(filepath.Join(lsm.dir, fileName))
+}
+
+func (lsm *LogStructuredMergeTree) Compact() error {
+	if len(lsm.files) <= 1 {
+		return nil
 	}
-	latest.index[key] = int64(offset)
+	kv := make(map[string]string)
+	targets := lsm.files[:len(lsm.files)-1]
+	for _, file := range targets {
+		f, err := os.Open(file.path)
+		if err != nil {
+			return fmt.Errorf("failed to close file: %v", err)
+		}
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := scanner.Text()
+			line = strings.Trim(line, "\n")
+			line = strings.Trim(line, "\r")
+			fields := strings.SplitN(line, ",", 2)
+			if len(fields) != 2 {
+				continue
+			}
+			kv[fields[0]] = fields[1]
+		}
+
+		err = scanner.Err()
+		if err != nil {
+			return fmt.Errorf("scanner error: %v", err)
+		}
+		err = f.Close()
+		if err != nil {
+			return fmt.Errorf("failed to close file: %v", err)
+		}
+	}
+
+	compacted := make([]struct {
+		path  string
+		index map[string]int64
+	}, 0)
+	var offset int64
+	index := make(map[string]int64)
+	var file *os.File
+	for k, v := range kv {
+		line := fmt.Sprintf("%s,%s\n", k, v)
+		lineBytes := len(line)
+		if len(compacted) == 0 {
+			fileName := fmt.Sprintf("compacted_%s.log", time.Now().Format(time.RFC3339))
+			var err error
+			file, err = os.Create(filepath.Join(lsm.dir, fileName))
+			if err != nil {
+				return fmt.Errorf("failed to create file: %v", err)
+			}
+			path, err := filepath.Abs(file.Name())
+			if err != nil {
+				return fmt.Errorf("failed to get absolute path: %v", err)
+			}
+			compacted = append(compacted, struct {
+				path  string
+				index map[string]int64
+			}{
+				path:  path,
+				index: index,
+			})
+		}
+		if int(offset)+lineBytes > maxBytesPerFile {
+			if err := file.Close(); err != nil {
+				return fmt.Errorf("failed to close file: %v", err)
+			}
+
+			fileName := fmt.Sprintf("compacted_%s.log", time.Now().Format(time.RFC3339))
+			var err error
+			file, err = os.Create(filepath.Join(lsm.dir, fileName))
+			if err != nil {
+				return fmt.Errorf("failed to create file: %v", err)
+			}
+			path, err := filepath.Abs(file.Name())
+			if err != nil {
+				return fmt.Errorf("failed to get absolute path: %v", err)
+			}
+
+			offset = 0
+			index = make(map[string]int64)
+
+			compacted = append(compacted, struct {
+				path  string
+				index map[string]int64
+			}{
+				path:  path,
+				index: index,
+			})
+		}
+
+		b, err := file.WriteString(line)
+		if err != nil {
+			return fmt.Errorf("failed to write line: %v", err)
+		}
+		index[k] = offset
+		offset += int64(b)
+	}
+	if file != nil {
+		if err := file.Close(); err != nil {
+			return err
+		}
+	}
+	for _, t := range targets {
+		if err := os.Remove(t.path); err != nil {
+			return fmt.Errorf("failed to remove a old file: %v", err)
+		}
+	}
+	lsm.files = append(compacted, lsm.files[len(targets):]...)
 
 	return nil
 }

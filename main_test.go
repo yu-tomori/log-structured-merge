@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -189,4 +191,87 @@ func TestStoreBeyondMaxBytes(t *testing.T) {
 	if actual != expected {
 		t.Errorf("expected: %s, actual: %s", expected, actual)
 	}
+}
+
+func TestCompact(t *testing.T) {
+	file1 := `key1,value1
+key1,value1
+key1,value1
+key1,value1
+key2,value1
+key2,value2
+key2,value3
+key2,value4
+key2,value5
+key3,value3
+`
+	file2 := `key3,value4
+key4,value8
+`
+
+	file3 := `key5,value10
+key6,value11
+`
+
+	lsm := connect(t, file1, file2, file3)
+	if err := lsm.Compact(); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(lsm.files[0].path)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	actual := make(map[string]string)
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		line := s.Text()
+		line = strings.TrimSuffix(line, "\n")
+		line = strings.TrimSuffix(line, "\r")
+		fields := strings.SplitN(line, ",", 2)
+		if len(fields) != 2 {
+			t.Fatal(err)
+		}
+		actual[fields[0]] = fields[1]
+	}
+	if err := s.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	expected := map[string]string{
+		"key1": "value1",
+		"key2": "value5",
+		"key3": "value4",
+		"key4": "value8",
+	}
+	if len(actual) != len(expected) {
+		t.Errorf("actual length: %d, expected length: %d", len(actual), len(expected))
+	}
+	for k, v := range expected {
+		if actual[k] != v {
+			t.Errorf("%s != %s", actual[k], v)
+		}
+	}
+
+	cases := []struct {
+		key      string
+		expected string
+	}{
+		{"key1", "value1"},
+		{"key2", "value5"},
+		{"key3", "value4"},
+		{"key4", "value8"},
+		{"key5", "value10"},
+		{"key6", "value11"},
+	}
+	for _, c := range cases {
+		actual, err := lsm.Get(c.key)
+		if err != nil {
+			t.Errorf("failed to get %s: %v", c.key, err)
+			continue
+		}
+		if actual != c.expected {
+			t.Errorf("%s != %s", actual, expected)
+		}
+	}
+
 }
