@@ -11,15 +11,10 @@ import (
 	"time"
 )
 
-type Storage interface {
-	Get(key string) (value string)
-	Store(key string, value string) (ok bool, savedAt int64)
-	Compact() error
-}
-
 type LogStructuredMergeTree struct {
-	dir   string
-	files []struct { // new file added at last
+	dir      string
+	memtable memtable
+	files    []struct { // new file added at last
 		path  string           // open, close in every access
 		index map[string]int64 // key to offset in file
 	}
@@ -263,6 +258,7 @@ func (lsm *LogStructuredMergeTree) Compact() error {
 			if err != nil {
 				return fmt.Errorf("failed to get absolute path: %v", err)
 			}
+
 			compacted = append(compacted, struct {
 				path  string
 				index map[string]int64
